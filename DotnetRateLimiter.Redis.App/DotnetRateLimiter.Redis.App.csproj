@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net7.0</TargetFramework>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="StackExchange.Redis" Version="2.6.48" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="7.0.0-preview.5.22301.12" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\DotnetRateLimiter.Redis\DotnetRateLimiter.Redis.csproj" />
+  </ItemGroup>
+</Project>
