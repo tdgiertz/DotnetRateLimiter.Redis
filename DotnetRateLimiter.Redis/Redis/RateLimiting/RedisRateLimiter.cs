@@ -28,7 +28,7 @@ namespace DotnetRateLimiter.Redis.RateLimiting
         {
             ThrowIfDisposed();
 
-            return (int)_limiter.Count();
+            return (int)_limiter.AvailableCount();
         }
 
         protected override RateLimitLease AcquireCore(int permitCount)
@@ -37,7 +37,7 @@ namespace DotnetRateLimiter.Redis.RateLimiting
 
             if(permitCount == 0)
             {
-                if(_limiter.Count() > 0)
+                if(_limiter.AvailableCount() > 0)
                 {
                     return SuccessfulLease;
                 }
@@ -56,7 +56,7 @@ namespace DotnetRateLimiter.Redis.RateLimiting
 
             if(permitCount == 0)
             {
-                if(_limiter.Count() > 0)
+                if(_limiter.AvailableCount() > 0)
                 {
                     return new ValueTask<RateLimitLease>(SuccessfulLease);
                 }

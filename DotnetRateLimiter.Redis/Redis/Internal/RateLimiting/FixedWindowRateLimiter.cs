@@ -58,14 +58,27 @@ namespace DotnetRateLimiter.Redis.Internal.RateLimiting
                 .ContinueWith(async task => RedisValueToLong(await task.ConfigureAwait(false))).Unwrap();
         }
 
+        public long AvailableCount()
+        {
+            var redisValue = _redis.GetDatabase(_settings.DatabaseId).StringGet(_settings.Key);
+
+            return RedisValueToLong(redisValue);
+        }
+
+        public Task<long> AvailableCountAsync(CancellationToken cancellationToken = default)
+        {
+            return _redis.GetDatabase(_settings.DatabaseId).StringGetAsync(_settings.Key)
+                .ContinueWith(async task => _settings.Rate - RedisValueToLong(await task.ConfigureAwait(false))).Unwrap();
+        }
+
         private long RedisValueToLong(RedisValue redisValue)
         {
             if(redisValue != RedisValue.Null && redisValue.TryParse(out long value))
             {
-                return _settings.Rate - value;
+                return value;
             }
 
-            return _settings.Rate;
+            return 0;
         }
 
         internal override string GetLuaScript()

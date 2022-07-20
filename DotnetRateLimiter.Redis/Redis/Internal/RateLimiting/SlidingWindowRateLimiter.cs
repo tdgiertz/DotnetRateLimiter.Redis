@@ -36,10 +36,20 @@ namespace DotnetRateLimiter.Redis.Internal.RateLimiting
 
         public long Count()
         {
-            return _settings.Rate -  _redis.GetDatabase(_settings.DatabaseId).SortedSetLength(_settings.Key);
+            return _redis.GetDatabase(_settings.DatabaseId).SortedSetLength(_settings.Key);
         }
 
         public Task<long> CountAsync(CancellationToken cancellationToken = default)
+        {
+            return _redis.GetDatabase(_settings.DatabaseId).SortedSetLengthAsync(_settings.Key).ContinueWith(async task => await task.ConfigureAwait(false)).Unwrap();
+        }
+
+        public long AvailableCount()
+        {
+            return _settings.Rate - _redis.GetDatabase(_settings.DatabaseId).SortedSetLength(_settings.Key);
+        }
+
+        public Task<long> AvailableCountAsync(CancellationToken cancellationToken = default)
         {
             return _redis.GetDatabase(_settings.DatabaseId).SortedSetLengthAsync(_settings.Key).ContinueWith(async task => _settings.Rate - await task.ConfigureAwait(false)).Unwrap();
         }

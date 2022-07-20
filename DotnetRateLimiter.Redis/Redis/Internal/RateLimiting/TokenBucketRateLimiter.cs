@@ -48,10 +48,38 @@ namespace DotnetRateLimiter.Redis.Internal.RateLimiting
         {
             var redisValue = _redis.GetDatabase(_settings.DatabaseId).StringGet(_settings.Key);
 
-            return RedisValueToLong(redisValue);
+            if(redisValue == RedisValue.Null)
+            {
+                return 0;
+            }
+
+            return _settings.Capacity - RedisValueToLong(redisValue);
         }
 
         public Task<long> CountAsync(CancellationToken cancellationToken = default)
+        {
+            return _redis.GetDatabase(_settings.DatabaseId).StringGetAsync(_settings.Key)
+                .ContinueWith(async task =>
+                {
+                    var redisValue = await task.ConfigureAwait(false);
+
+                    if(redisValue == RedisValue.Null)
+                    {
+                        return 0;
+                    }
+
+                    return _settings.Capacity - RedisValueToLong(redisValue);
+                }).Unwrap();
+        }
+
+        public long AvailableCount()
+        {
+            var redisValue = _redis.GetDatabase(_settings.DatabaseId).StringGet(_settings.Key);
+
+            return RedisValueToLong(redisValue);
+        }
+
+        public Task<long> AvailableCountAsync(CancellationToken cancellationToken = default)
         {
             return _redis.GetDatabase(_settings.DatabaseId).StringGetAsync(_settings.Key)
                 .ContinueWith(async task => RedisValueToLong(await task.ConfigureAwait(false))).Unwrap();
@@ -59,7 +87,6 @@ namespace DotnetRateLimiter.Redis.Internal.RateLimiting
 
         private static long RedisValueToLong(RedisValue redisValue)
         {
-            Console.WriteLine(redisValue);
             if(redisValue != RedisValue.Null)
             {
                 return System.Text.Json.JsonDocument.Parse(redisValue.ToString()).RootElement.GetProperty("TokenCount").GetInt64();
