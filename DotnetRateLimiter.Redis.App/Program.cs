@@ -65,10 +65,6 @@ namespace DotnetRateLimiter.Redis.Test
 
             var rateLimiter = host.Services.GetRequiredService<RateLimiter>();
 
-            redis.GetDatabase().KeyDelete(key);
-
-            rateLimiter.GetAvailablePermits();
-
             NonBlockingConsole.WriteLine($"Starting permit count {rateLimiter.GetAvailablePermits()}");
 
             var cancellationToken = new CancellationTokenSource();

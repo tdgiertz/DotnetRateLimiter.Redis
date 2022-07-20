@@ -128,7 +128,6 @@ namespace DotnetRateLimiter.Redis.Tests.Redis.RateLimiting
         public void Should_Exceed_Rate_Count()
         {
             var key = GetKey();
-            Console.WriteLine(key);
             _redis.GetDatabase().KeyDelete(key);
 
             var interval = TimeSpan.FromSeconds(100);
