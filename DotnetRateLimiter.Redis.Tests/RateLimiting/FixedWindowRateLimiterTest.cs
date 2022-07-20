@@ -2,7 +2,6 @@
 using DotnetRateLimiter.Redis.Internal.RateLimiting;
 using StackExchange.Redis;
 using System;
-using System.Diagnostics;
 using System.Threading;
 using Xunit;
 
@@ -11,6 +10,26 @@ namespace DotnetRateLimiter.Redis.Tests.RateLimiting
     public class FixedWindowRateLimiterTest
     {
         private static IConnectionMultiplexer _redis = ConnectionMultiplexer.Connect("localhost");
+
+        [Fact]
+        public void Should_Have_Zero_Count_With_No_Key()
+        {
+            var key = GetKey();
+            _redis.GetDatabase().KeyDelete(key);
+
+            var interval = TimeSpan.FromSeconds(5);
+            var rate = 5;
+
+            var rateLimiter = new FixedWindowRateLimiter(_redis, GetSettings(key, interval, rate));
+
+            _redis.GetDatabase().KeyDelete(key);
+
+            var count = rateLimiter.Count();
+
+            Assert.Equal(0, count);
+
+            _redis.GetDatabase().KeyDelete(key);
+        }
 
         [Fact]
         public void Should_Have_Active_Count()
@@ -147,6 +166,13 @@ namespace DotnetRateLimiter.Redis.Tests.RateLimiting
             }
 
             return response;
+        }
+
+        private long? GetCount(string key, TimeSpan interval, long rate)
+        {
+            var rateLimiter = new FixedWindowRateLimiter(_redis, GetSettings(key, interval, rate));
+
+            return rateLimiter.Count();
         }
 
         private WindowRequestSettings GetSettings(string key, TimeSpan interval, long rate)

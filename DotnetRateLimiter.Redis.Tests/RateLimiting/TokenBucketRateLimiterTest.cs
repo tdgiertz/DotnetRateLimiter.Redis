@@ -12,6 +12,27 @@ namespace DotnetRateLimiter.Redis.Tests.Redis.RateLimiting
         private static IConnectionMultiplexer _redis = ConnectionMultiplexer.Connect("localhost");
 
         [Fact]
+        public void Should_Have_Zero_Count_With_No_Key()
+        {
+            var key = GetKey();
+            _redis.GetDatabase().KeyDelete(key);
+
+            var interval = TimeSpan.FromSeconds(5);
+            var rate = 5;
+            var capacity = 5L;
+
+            var rateLimiter = new TokenBucketRateLimiter(_redis, GetSettings(key, interval, capacity, rate));
+
+            _redis.GetDatabase().KeyDelete(key);
+
+            var count = rateLimiter.Count();
+
+            Assert.Equal(0, count);
+
+            _redis.GetDatabase().KeyDelete(key);
+        }
+
+        [Fact]
         public void Should_Not_Have_Active_Count()
         {
             var key = GetKey();

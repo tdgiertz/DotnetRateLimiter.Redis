@@ -30,7 +30,7 @@ namespace DotnetRateLimiter.Redis.Test
                     {
                         builder
                             .WithCapacity(100)
-                            .WithEmptyBucketOnStart(true)
+                            .WithEmptyBucketOnStart(false)
                             .WithRefillRate(5)
                             .WithInterval(() => TimeSpan.FromSeconds(1))
                             .WithGetNowUtc(() => DateTime.UtcNow);
@@ -102,9 +102,12 @@ namespace DotnetRateLimiter.Redis.Test
                         if(lease.IsAcquired)
                         {
                             Interlocked.Add(ref _totalLeases, targetCount);
+
+                            NonBlockingConsole.WriteLine($"GetAvailablePermits: {rateLimiter.GetAvailablePermits()}");
+
                             break;
                         }
-                    } while (!lease.IsAcquired);
+                    } while (!lease.IsAcquired && !cancellationToken.IsCancellationRequested);
 
                     var currentLeasedWorkers = Interlocked.Increment(ref _currentNumberOfLeasedWorkers);
                     NonBlockingConsole.WriteLine($"{workerName} has been leased, {currentLeasedWorkers} total leased");
@@ -130,6 +133,8 @@ namespace DotnetRateLimiter.Redis.Test
                 while (!cancellationToken.IsCancellationRequested)
                 {
                     var lease = await rateLimiter.WaitAsync(targetCount, cancellationToken);
+
+                    NonBlockingConsole.WriteLine($"GetAvailablePermits: {rateLimiter.GetAvailablePermits()}");
                     
                     if(lease.IsAcquired)
                     {

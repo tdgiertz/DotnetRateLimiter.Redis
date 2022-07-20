@@ -1,7 +1,6 @@
 ﻿using DotnetRateLimiter.RateLimiting;
 using StackExchange.Redis;
 using System;
-using System.Collections.Generic;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
@@ -12,18 +11,13 @@ namespace DotnetRateLimiter.Redis.Internal.RateLimiting
     {
         protected readonly IConnectionMultiplexer _redis;
         protected readonly TSettings _settings;
-        protected readonly string _limitScript;
-        protected readonly Dictionary<Parameter, RedisValue> _defaultParameterValues = new();
-        protected readonly Dictionary<Parameter, string> _parameterNameLookup = new();
-        protected readonly List<Parameter> _parameterNameOrder = new();
-        protected readonly List<string> _parameterNames = new();
+        protected readonly LuaScript _limitScript;
 
         public RateLimiter(IConnectionMultiplexer redis, TSettings settings)
         {
             _redis = redis;
             _settings = settings;
-            SetParameters();
-            _limitScript = Regex.Replace(GetLuaScript(_parameterNameLookup), @"\s+", " ");
+            _limitScript = LuaScript.Prepare(Regex.Replace(GetLuaScript(), @"\s+", " "));
 
             CheckArguments();
             InitialSetup();
@@ -33,9 +27,7 @@ namespace DotnetRateLimiter.Redis.Internal.RateLimiting
         {
             CheckCountArgument(count);
 
-            var parameters = GetOrderedParameters(count);
-
-            var result = _redis.GetDatabase(_settings.DatabaseId).ScriptEvaluate(_limitScript, new RedisKey[] { _settings.Key }, parameters);
+            var result = _redis.GetDatabase(_settings.DatabaseId).ScriptEvaluate(_limitScript, GetParameters(count));
 
             return GetRateLimitResponse(count, result);
         }
@@ -43,11 +35,9 @@ namespace DotnetRateLimiter.Redis.Internal.RateLimiting
         public Task<RateLimitResponse> LimitAsync(int count, CancellationToken cancellationToken = default)
         {
             CheckCountArgument(count);
-            
-            var parameters = GetOrderedParameters(count);
 
-            return _redis.GetDatabase(_settings.DatabaseId).ScriptEvaluateAsync(_limitScript, new RedisKey[] { _settings.Key }, parameters)
-                    .ContinueWith(async task => GetRateLimitResponse(count, await task)).Unwrap();
+            return _redis.GetDatabase(_settings.DatabaseId).ScriptEvaluateAsync(_limitScript, GetParameters(count))
+                    .ContinueWith(async task => GetRateLimitResponse(count, await task.ConfigureAwait(false))).Unwrap();
         }
 
         public bool Delete()
@@ -87,105 +77,14 @@ namespace DotnetRateLimiter.Redis.Internal.RateLimiting
             }
         }
 
+        internal abstract object GetParameters(int count);
         internal abstract void InitialSetup();
         internal abstract RateLimitResponse GetRateLimitResponse(int count, RedisResult redisResult);
-        internal abstract string GetLuaScript(Dictionary<Parameter, string> parameterNameLookup);
-
-        internal virtual int SetParameters()
-        {
-            if(_settings == null)
-            {
-                throw new ArgumentNullException(nameof(_settings));
-            }
-
-            var totalCount = 0;
-
-            var parameterName = GetParameterName(totalCount++);
-            _parameterNameLookup.Add(Parameter.IntervalTicks, parameterName);
-            _defaultParameterValues.Add(Parameter.IntervalTicks, new RedisValue());
-            _parameterNameOrder.Add(Parameter.IntervalTicks);
-
-            parameterName = GetParameterName(totalCount++);
-            _parameterNameLookup.Add(Parameter.IntervalSeconds, parameterName);
-            _defaultParameterValues.Add(Parameter.IntervalSeconds, new RedisValue());
-            _parameterNameOrder.Add(Parameter.IntervalSeconds);
-
-            parameterName = GetParameterName(totalCount++);
-            _parameterNameLookup.Add(Parameter.Now, parameterName);
-            _defaultParameterValues.Add(Parameter.Now, new RedisValue());
-            _parameterNameOrder.Add(Parameter.Now);
-
-            parameterName = GetParameterName(totalCount++);
-            _parameterNameLookup.Add(Parameter.IncrementAmount, parameterName);
-            _defaultParameterValues.Add(Parameter.IncrementAmount, new RedisValue());
-            _parameterNameOrder.Add(Parameter.IncrementAmount);
-
-            return totalCount;
-        }
-
-        private RedisValue[] GetOrderedParameters(int count)
-        {
-            if(_parameterNameOrder.Count == 0)
-            {
-                throw new InvalidOperationException();
-            }
-
-            var index = 0;
-            var parameters = new RedisValue[_parameterNameOrder.Count];
-            foreach(var parameter in _parameterNameOrder)
-            {
-                var parameterValue = GetParameterValue(parameter, count);
-
-                if(parameterValue.HasValue)
-                {
-                    parameters[index++] = parameterValue.Value;
-                    continue;
-                }
-
-                parameters[index++] = _defaultParameterValues[parameter];
-            }
-
-            return parameters;
-        }
-
-        internal virtual RedisValue? GetParameterValue(Parameter parameter, int count)
-        {
-            if(parameter == Parameter.IncrementAmount)
-            {
-                return new RedisValue(count.ToString());
-            }
-            if(parameter == Parameter.Now)
-            {
-                var now = _settings.GetNowUtc?.Invoke() ?? DateTime.UtcNow;
-                return new RedisValue(now.Ticks.ToString());
-            }
-            if(parameter == Parameter.IntervalSeconds)
-            {
-                var interval = _settings.GetInterval();
-                return new RedisValue(interval.TotalSeconds.ToString());
-            }
-            if(parameter == Parameter.IntervalTicks)
-            {
-                var interval = _settings.GetInterval();
-                return new RedisValue(interval.Ticks.ToString());
-            }
-
-            return null;
-        }
+        internal abstract string GetLuaScript();
 
         internal static string GetParameterName(int index)
         {
             return $"ARGV[{index + 1}]";
-        }
-
-        internal static long? RedisValueToLong(RedisValue redisValue)
-        {
-            if(redisValue.TryParse(out long value))
-            {
-                return value;
-            }
-
-            return null;
         }
     }
 }

@@ -12,6 +12,26 @@ namespace DotnetRateLimiter.Redis.Tests.Redis.RateLimiting
         private static IConnectionMultiplexer _redis = ConnectionMultiplexer.Connect("localhost");
 
         [Fact]
+        public void Should_Have_Zero_Count_With_No_Key()
+        {
+            var key = GetKey();
+            _redis.GetDatabase().KeyDelete(key);
+
+            var interval = TimeSpan.FromSeconds(5);
+            var rate = 5;
+
+            var rateLimiter = new SlidingWindowRateLimiter(_redis, GetSettings(key, interval, rate));
+
+            _redis.GetDatabase().KeyDelete(key);
+
+            var count = rateLimiter.Count();
+
+            Assert.Equal(0, count);
+
+            _redis.GetDatabase().KeyDelete(key);
+        }
+
+        [Fact]
         public void Should_Have_Rate_Count()
         {
             var key = GetKey();
@@ -81,7 +101,7 @@ namespace DotnetRateLimiter.Redis.Tests.Redis.RateLimiting
 
             Thread.Sleep((int)interval.TotalMilliseconds + 100);
 
-            Assert.Null(GetCount(key, interval, rate));
+            Assert.Equal(0, GetCount(key, interval, rate));
 
             _redis.GetDatabase().KeyDelete(key);
         }

@@ -1,7 +1,6 @@
 ﻿using DotnetRateLimiter.RateLimiting;
 using StackExchange.Redis;
 using System;
-using System.Collections.Generic;
 using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
@@ -45,37 +44,48 @@ namespace DotnetRateLimiter.Redis.Internal.RateLimiting
             _redis.GetDatabase(_settings.DatabaseId).ScriptEvaluate(script, new RedisKey[] { _settings.Key });
         }
 
-        public long? Count()
+        public long Count()
         {
             var redisValue = _redis.GetDatabase(_settings.DatabaseId).StringGet(_settings.Key);
 
             return RedisValueToLong(redisValue);
         }
 
-        public Task<long?> CountAsync(CancellationToken cancellationToken = default)
+        public Task<long> CountAsync(CancellationToken cancellationToken = default)
         {
             return _redis.GetDatabase(_settings.DatabaseId).StringGetAsync(_settings.Key)
-                    .ContinueWith(async task => RedisValueToLong(await task)).Unwrap();
+                .ContinueWith(async task => RedisValueToLong(await task.ConfigureAwait(false))).Unwrap();
         }
 
-        internal override string GetLuaScript(Dictionary<Parameter, string> parameterNameLookup)
+        private static long RedisValueToLong(RedisValue redisValue)
+        {
+            Console.WriteLine(redisValue);
+            if(redisValue != RedisValue.Null)
+            {
+                return System.Text.Json.JsonDocument.Parse(redisValue.ToString()).RootElement.GetProperty("TokenCount").GetInt64();
+            }
+
+            return 0;
+        }
+
+        internal override string GetLuaScript()
         {
             return $@"
                 local results = {{}}
 
-                local capacity = tonumber({parameterNameLookup[Parameter.Rate]})
-                local currentTicks = tonumber({parameterNameLookup[Parameter.Now]})
-                local refillSpanTicks = tonumber({parameterNameLookup[Parameter.IntervalTicks]})
-                local refillRate = tonumber({parameterNameLookup[Parameter.RefillRate]})
-                local incrementAmount = tonumber({parameterNameLookup[Parameter.IncrementAmount]})
+                local capacity = tonumber(@Rate)
+                local currentTicks = tonumber(@Now)
+                local refillSpanTicks = tonumber(@IntervalTicks)
+                local refillRate = tonumber(@RefillRate)
+                local incrementAmount = tonumber(@IncrementAmount)
                 local nextRefillTicks = refillSpanTicks + currentTicks
 
                 local json = cjson.encode({{['NextRefillTicks']=nextRefillTicks,['TokenCount']={(_settings.IsEmptyOnStart ? "0" : "capacity")}}})
                 
-                local doesExist = redis.call('EXISTS', KEYS[1])
+                local doesExist = redis.call('EXISTS', @Key)
 
                 if doesExist == 1 then
-                    json = redis.call('GET', KEYS[1])
+                    json = redis.call('GET', @Key)
                 end
 
                 local value = cjson.decode(json)
@@ -86,7 +96,7 @@ namespace DotnetRateLimiter.Redis.Internal.RateLimiting
                 local refillTokenCount = 0
 
                 if currentTicks >= nextRefillTicks then
-                    local refillAmount = math.max((currentTicks - nextRefillTicks) / refillSpanTicks, 1)
+                    local refillAmount = math.max(math.floor((currentTicks - nextRefillTicks) / refillSpanTicks), 1)
                     nextRefillTicks = nextRefillTicks + (refillSpanTicks * refillAmount)
 
                     refillTokenCount = refillRate * refillAmount
@@ -106,11 +116,31 @@ namespace DotnetRateLimiter.Redis.Internal.RateLimiting
 
                 json = cjson.encode(value)
 
-                redis.call('SET', KEYS[1], json)
+                redis.call('SET', @Key, json)
 
                 results[#results+1] = tokensAvailable
                 results[#results+1] = isSuccessful
                 return results";
+        }
+
+        internal override object GetParameters(int count)
+        {
+            var tickDivisor = 10000;
+            var now = _settings.GetNowUtc?.Invoke() ?? DateTime.UtcNow;
+            var nowTicks = now.Ticks / tickDivisor;
+            var interval = _settings.GetInterval();
+            var intervalTicks = interval.Ticks / tickDivisor;
+
+            return new
+            {
+                Key = _settings.Key,
+                IncrementAmount = new RedisValue(count.ToString()),
+                Now = new RedisValue(nowTicks.ToString()),
+                IntervalSeconds = new RedisValue(interval.TotalSeconds.ToString()),
+                IntervalTicks = new RedisValue(intervalTicks.ToString()),
+                Rate = new RedisValue(_settings.Capacity.ToString()),
+                RefillRate = new RedisValue(_settings.RefillRate.ToString()),
+            };
         }
 
         internal override RateLimitResponse GetRateLimitResponse(int count, RedisResult redisResult)
@@ -124,23 +154,6 @@ namespace DotnetRateLimiter.Redis.Internal.RateLimiting
             var isSuccessful = (bool)values[1];
 
             return new RateLimitResponse { ActiveCount = activeCount, IsSuccessful = isSuccessful };
-        }
-
-        internal override int SetParameters()
-        {
-            var totalCount = base.SetParameters();
-
-            var parameterName = GetParameterName(totalCount++);
-            _parameterNameLookup.Add(Parameter.Rate, parameterName);
-            _defaultParameterValues.Add(Parameter.Rate, new RedisValue(_settings.Capacity.ToString()));
-            _parameterNameOrder.Add(Parameter.Rate);
-
-            parameterName = GetParameterName(totalCount++);
-            _parameterNameLookup.Add(Parameter.RefillRate, parameterName);
-            _defaultParameterValues.Add(Parameter.RefillRate, new RedisValue(_settings.RefillRate.ToString()));
-            _parameterNameOrder.Add(Parameter.RefillRate);
-
-            return totalCount;
         }
 
         internal override void CheckArguments()

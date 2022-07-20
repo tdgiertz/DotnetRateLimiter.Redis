@@ -28,7 +28,7 @@ namespace DotnetRateLimiter.Redis.RateLimiting
         {
             ThrowIfDisposed();
 
-            return (int)(_limiter.Count() ?? 0);
+            return (int)_limiter.Count();
         }
 
         protected override RateLimitLease AcquireCore(int permitCount)
@@ -71,7 +71,7 @@ namespace DotnetRateLimiter.Redis.RateLimiting
             var task = WaitAsyncInternal(permitCount, source.Token).ContinueWith(async resultTask =>
             {
                 _queue.TryRemove(source.GetHashCode(), out _);
-                return await resultTask;
+                return await resultTask.ConfigureAwait(false);
             }).Unwrap();
 
             return new ValueTask<RateLimitLease>(task);
@@ -81,14 +81,14 @@ namespace DotnetRateLimiter.Redis.RateLimiting
         {
             while(!cancellationToken.IsCancellationRequested)
             {
-                var limitResult = await _limiter.LimitAsync(permitCount, cancellationToken);
+                var limitResult = _limiter.Limit(permitCount);
 
                 if(limitResult.IsSuccessful)
                 {
                     return GetLease(limitResult);
                 }
 
-                await Task.Delay(100, cancellationToken);
+                await Task.Delay(100, cancellationToken).ConfigureAwait(false);
             }
 
             return FailedLease;
