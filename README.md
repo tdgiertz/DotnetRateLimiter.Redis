@@ -1,4 +1,4 @@
-# Redis Rate Limit with .NET 7.0 System.Threading.RateLimiting
+# Redis Rate Limit with .NET 9.0 System.Threading.RateLimiting
 
 A test project to implement the System.Threading.RateLimiting.RateLimiter abstract class on top of Redis. Lua scripting is used through the StackExchange.Redis library instead of the standard c# methods that call Redis commands. This is done to ensure that each rate limit interaction is done in an atomic fashion and the update from one interaction is completed before another starts.
 
