@@ -1,58 +1,47 @@
 using System;
-using DotnetRateLimiter.RateLimiting;
+using DotnetRateLimiter.Redis.RateLimiting.Models;
 using StackExchange.Redis;
 
-namespace DotnetRateLimiter.Builders
+namespace DotnetRateLimiter.Redis.Builders;
+
+public abstract class WindowRateLimiterBuilder<TSettings>(TSettings settings, IConnectionMultiplexer redis, string rateLimiterKey) : RateLimiterBuilder<TSettings>(settings, redis, rateLimiterKey) where TSettings : WindowRequestSettings
 {
-    public abstract class WindowRateLimiterBuilder<TSettings> : RateLimiterBuilder<TSettings> where TSettings : WindowRequestSettings
+    public WindowRateLimiterBuilder<TSettings> WithWindowRate(long rate)
     {
-        public WindowRateLimiterBuilder(TSettings settings, IConnectionMultiplexer redis, string rateLimiterKey) : base(settings, redis, rateLimiterKey)
-        {
-        }
+        _settings.Rate = rate;
 
-        public WindowRateLimiterBuilder<TSettings> WithWindowRate(long rate)
-        {
-            _settings.Rate = rate;
+        return this;
+    }
 
-            return this;
-        }
+    public WindowRateLimiterBuilder<TSettings> WithExpiration(Func<DateTime> expiration)
+    {
+        _settings.GetExpirationUtc = expiration;
 
-        public WindowRateLimiterBuilder<TSettings> WithExpiration(Func<DateTime> expiration)
-        {
-            _settings.GetExpirationUtc = expiration;
+        return this;
+    }
 
-            return this;
-        }
+    public WindowRateLimiterBuilder<TSettings> WithRecordOnlySuccess(bool doRecordOnlyOnSuccess)
+    {
+        _settings.DoRecordOnlyOnSuccess = doRecordOnlyOnSuccess;
 
-        public WindowRateLimiterBuilder<TSettings> WithRecordOnlySuccess(bool doRecordOnlyOnSuccess)
-        {
-            _settings.DoRecordOnlyOnSuccess = doRecordOnlyOnSuccess;
+        return this;
+    }
 
-            return this;
-        }
+    public WindowRateLimiterBuilder<TSettings> WithWindowSize(Func<TimeSpan> getWindowSize)
+    {
+        ArgumentNullException.ThrowIfNull(getWindowSize);
 
-        public WindowRateLimiterBuilder<TSettings> WithWindowSize(Func<TimeSpan> getWindowSize)
-        {
-            if(getWindowSize == null)
-            {
-                throw new ArgumentNullException(nameof(getWindowSize));
-            }
+        _settings.GetInterval = getWindowSize;
 
-            _settings.GetInterval = getWindowSize;
+        return this;
+    }
 
-            return this;
-        }
+    public WindowRateLimiterBuilder<TSettings> WithGetNowUtc(Func<DateTime> getNowUtc)
+    {
+        ArgumentNullException.ThrowIfNull(getNowUtc);
 
-        public WindowRateLimiterBuilder<TSettings> WithGetNowUtc(Func<DateTime> getNowUtc)
-        {
-            if(getNowUtc == null)
-            {
-                throw new ArgumentNullException(nameof(getNowUtc));
-            }
+        _settings.GetNowUtc = getNowUtc;
 
-            _settings.GetNowUtc = getNowUtc;
-
-            return this;
-        }
+        return this;
     }
 }

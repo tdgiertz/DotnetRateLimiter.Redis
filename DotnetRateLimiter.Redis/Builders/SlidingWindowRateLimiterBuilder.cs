@@ -1,20 +1,15 @@
 using System.Threading.RateLimiting;
-using DotnetRateLimiter.RateLimiting;
+using DotnetRateLimiter.Redis.RateLimiting.Models;
 using StackExchange.Redis;
 
-namespace DotnetRateLimiter.Builders
-{
-    public class SlidingWindowRateLimiterBuilder : WindowRateLimiterBuilder<WindowRequestSettings>
-    {
-        public SlidingWindowRateLimiterBuilder(IConnectionMultiplexer redis, string rateLimiterKey) : base(new WindowRequestSettings(), redis, rateLimiterKey)
-        {
-        }
+namespace DotnetRateLimiter.Redis.Builders;
 
-        public override RateLimiter Build()
-        {
-            var redisRateLimiter = new DotnetRateLimiter.Redis.Internal.RateLimiting.SlidingWindowRateLimiter(_redis, _settings);
-            
-            return new DotnetRateLimiter.Redis.RateLimiting.RedisRateLimiter(redisRateLimiter);
-        }
+public class SlidingWindowRateLimiterBuilder(IConnectionMultiplexer redis, string rateLimiterKey) : WindowRateLimiterBuilder<WindowRequestSettings>(new WindowRequestSettings(), redis, rateLimiterKey)
+{
+    public override RateLimiter Build()
+    {
+        var redisRateLimiter = new Redis.Internal.RateLimiting.SlidingWindowRateLimiter(_redis, _settings);
+        
+        return new Redis.RateLimiting.RedisRateLimiter(redisRateLimiter);
     }
 }

@@ -1,66 +1,55 @@
+using DotnetRateLimiter.Redis.RateLimiting.Models;
+using StackExchange.Redis;
 using System;
 using System.Threading.RateLimiting;
-using DotnetRateLimiter.RateLimiting;
-using StackExchange.Redis;
 
-namespace DotnetRateLimiter.Builders
+namespace DotnetRateLimiter.Redis.Builders;
+
+public class TokenBucketRateLimiterBuilder(IConnectionMultiplexer redis, string rateLimiterKey) : RateLimiterBuilder<TokenBucketRequestSettings>(new TokenBucketRequestSettings(), redis, rateLimiterKey)
 {
-    public class TokenBucketRateLimiterBuilder : RateLimiterBuilder<TokenBucketRequestSettings>
+    public TokenBucketRateLimiterBuilder WithCapacity(long capacity)
     {
-        public TokenBucketRateLimiterBuilder(IConnectionMultiplexer redis, string rateLimiterKey) : base(new TokenBucketRequestSettings(), redis, rateLimiterKey)
-        {
-        }
+        _settings.Capacity = capacity;
 
-        public TokenBucketRateLimiterBuilder WithCapacity(long capacity)
-        {
-            _settings.Capacity = capacity;
+        return this;
+    }
 
-            return this;
-        }
+    public TokenBucketRateLimiterBuilder WithRefillRate(long refillRate)
+    {
+        _settings.RefillRate = refillRate;
 
-        public TokenBucketRateLimiterBuilder WithRefillRate(long refillRate)
-        {
-            _settings.RefillRate = refillRate;
+        return this;
+    }
 
-            return this;
-        }
+    public TokenBucketRateLimiterBuilder WithEmptyBucketOnStart(bool isEmptyOnStart)
+    {
+        _settings.IsEmptyOnStart = isEmptyOnStart;
 
-        public TokenBucketRateLimiterBuilder WithEmptyBucketOnStart(bool isEmptyOnStart)
-        {
-            _settings.IsEmptyOnStart = isEmptyOnStart;
+        return this;
+    }
 
-            return this;
-        }
+    public TokenBucketRateLimiterBuilder WithInterval(Func<TimeSpan> getInterval)
+    {
+        ArgumentNullException.ThrowIfNull(getInterval);
 
-        public TokenBucketRateLimiterBuilder WithInterval(Func<TimeSpan> getInterval)
-        {
-            if(getInterval == null)
-            {
-                throw new ArgumentNullException(nameof(getInterval));
-            }
+        _settings.GetInterval = getInterval;
 
-            _settings.GetInterval = getInterval;
+        return this;
+    }
 
-            return this;
-        }
+    public TokenBucketRateLimiterBuilder WithGetNowUtc(Func<DateTime> getNowUtc)
+    {
+        ArgumentNullException.ThrowIfNull(getNowUtc);
 
-        public TokenBucketRateLimiterBuilder WithGetNowUtc(Func<DateTime> getNowUtc)
-        {
-            if(getNowUtc == null)
-            {
-                throw new ArgumentNullException(nameof(getNowUtc));
-            }
+        _settings.GetNowUtc = getNowUtc;
 
-            _settings.GetNowUtc = getNowUtc;
+        return this;
+    }
 
-            return this;
-        }
-
-        public override RateLimiter Build()
-        {
-            var redisRateLimiter = new DotnetRateLimiter.Redis.Internal.RateLimiting.TokenBucketRateLimiter(_redis, _settings);
-            
-            return new DotnetRateLimiter.Redis.RateLimiting.RedisRateLimiter(redisRateLimiter);
-        }
+    public override RateLimiter Build()
+    {
+        var redisRateLimiter = new Redis.Internal.RateLimiting.TokenBucketRateLimiter(_redis, _settings);
+        
+        return new Redis.RateLimiting.RedisRateLimiter(redisRateLimiter);
     }
 }

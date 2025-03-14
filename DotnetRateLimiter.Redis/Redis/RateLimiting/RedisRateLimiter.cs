@@ -1,102 +1,48 @@
-using System.Threading.Tasks;
-using System.Threading.RateLimiting;
+using DotnetRateLimiter.Redis.RateLimiting;
+using DotnetRateLimiter.Redis.RateLimiting.Models;
 using System;
-using System.Threading;
-using DotnetRateLimiter.RateLimiting;
 using System.Collections.Concurrent;
+using System.Threading;
+using System.Threading.RateLimiting;
+using System.Threading.Tasks;
 
-namespace DotnetRateLimiter.Redis.RateLimiting
+namespace DotnetRateLimiter.Redis.Redis.RateLimiting;
+
+public class RedisRateLimiter(IRateLimiter limiter) : RateLimiter
 {
-    public class RedisRateLimiter : RateLimiter
+    private static readonly RateLimitLease SuccessfulLease = new Lease(true);
+    private static readonly RateLimitLease FailedLease = new Lease(false);
+
+    private readonly IRateLimiter _limiter = limiter;
+    private readonly ConcurrentDictionary<int, CancellationTokenSource> _queue = new();
+    private readonly SemaphoreSlim _disposedSemaphore = new(1, 1);
+
+    private bool _disposed = false;
+    private long _failedLeaseCount = 0;
+    private long _successfulLeaseCount = 0;
+
+    public override TimeSpan? IdleDuration => null;
+
+    public override RateLimiterStatistics? GetStatistics()
     {
-        private static readonly RateLimitLease SuccessfulLease = new Lease(true);
-        private static readonly RateLimitLease FailedLease = new Lease(false);
+        ThrowIfDisposed();
 
-        private readonly IRateLimiter _limiter;
-        private readonly ConcurrentDictionary<int, CancellationTokenSource> _queue = new();
-
-        private bool _disposed = false;
-
-        public override TimeSpan? IdleDuration => null;
-
-        public RedisRateLimiter(IRateLimiter limiter)
+        return new RateLimiterStatistics
         {
-            _limiter = limiter;
-        }
+            CurrentAvailablePermits = _limiter.AvailableCount(),
+            TotalFailedLeases = _failedLeaseCount,
+            TotalSuccessfulLeases = _successfulLeaseCount,
+            CurrentQueuedCount = _queue.Count
+        };
+    }
 
-        public override int GetAvailablePermits()
+    protected override RateLimitLease AttemptAcquireCore(int permitCount)
+    {
+        ThrowIfDisposed();
+
+        if (permitCount == 0)
         {
-            ThrowIfDisposed();
-
-            return (int)_limiter.AvailableCount();
-        }
-
-        protected override RateLimitLease AcquireCore(int permitCount)
-        {
-            ThrowIfDisposed();
-
-            if(permitCount == 0)
-            {
-                if(_limiter.AvailableCount() > 0)
-                {
-                    return SuccessfulLease;
-                }
-
-                return FailedLease;
-            }
-
-            var response = _limiter.Limit(permitCount);
-
-            return GetLease(response);
-        }
-
-        protected override ValueTask<RateLimitLease> WaitAsyncCore(int permitCount, CancellationToken cancellationToken = default)
-        {
-            ThrowIfDisposed();
-
-            if(permitCount == 0)
-            {
-                if(_limiter.AvailableCount() > 0)
-                {
-                    return new ValueTask<RateLimitLease>(SuccessfulLease);
-                }
-
-                return new ValueTask<RateLimitLease>(FailedLease);
-            }
-
-            var source = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-
-            _queue.TryAdd(source.GetHashCode(), source);
-
-            var task = WaitAsyncInternal(permitCount, source.Token).ContinueWith(async resultTask =>
-            {
-                _queue.TryRemove(source.GetHashCode(), out _);
-                return await resultTask.ConfigureAwait(false);
-            }).Unwrap();
-
-            return new ValueTask<RateLimitLease>(task);
-        }
-
-        private async Task<RateLimitLease> WaitAsyncInternal(int permitCount, CancellationToken cancellationToken)
-        {
-            while(!cancellationToken.IsCancellationRequested)
-            {
-                var limitResult = _limiter.Limit(permitCount);
-
-                if(limitResult.IsSuccessful)
-                {
-                    return GetLease(limitResult);
-                }
-
-                await Task.Delay(100, cancellationToken).ConfigureAwait(false);
-            }
-
-            return FailedLease;
-        }
-
-        private static RateLimitLease GetLease(RateLimitResponse rateLimitResponse)
-        {
-            if (rateLimitResponse.IsSuccessful)
+            if (_limiter.AvailableCount() > 0)
             {
                 return SuccessfulLease;
             }
@@ -104,54 +50,120 @@ namespace DotnetRateLimiter.Redis.RateLimiting
             return FailedLease;
         }
 
-        protected override void Dispose(bool disposing)
+        var response = _limiter.Limit(permitCount);
+
+        return GetLease(response);
+    }
+
+    protected override ValueTask<RateLimitLease> AcquireAsyncCore(int permitCount, CancellationToken cancellationToken)
+    {
+        ThrowIfDisposed();
+
+        if (permitCount == 0)
         {
-            if (!disposing)
+            if (_limiter.AvailableCount() > 0)
             {
-                return;
+                return new ValueTask<RateLimitLease>(SuccessfulLease);
             }
 
+            return new ValueTask<RateLimitLease>(FailedLease);
+        }
+
+        var source = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+
+        _queue.TryAdd(source.GetHashCode(), source);
+
+        var task = WaitAsyncInternal(permitCount, source.Token).ContinueWith(async resultTask =>
+        {
+            _queue.TryRemove(source.GetHashCode(), out _);
+            return await resultTask.ConfigureAwait(false);
+        }).Unwrap();
+
+        return new ValueTask<RateLimitLease>(task);
+    }
+
+    private async Task<RateLimitLease> WaitAsyncInternal(int permitCount, CancellationToken cancellationToken)
+    {
+        while(!cancellationToken.IsCancellationRequested)
+        {
+            var limitResult = _limiter.Limit(permitCount);
+
+            if(limitResult.IsSuccessful)
+            {
+                return GetLease(limitResult);
+            }
+
+            await Task.Delay(100, cancellationToken).ConfigureAwait(false);
+        }
+
+        return FailedLease;
+    }
+
+    private RateLimitLease GetLease(RateLimitResponse rateLimitResponse)
+    {
+        if (rateLimitResponse.IsSuccessful)
+        {
+            Interlocked.Increment(ref _successfulLeaseCount);
+            return SuccessfulLease;
+        }
+
+        Interlocked.Increment(ref _failedLeaseCount);
+        return FailedLease;
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        if (!disposing)
+        {
+            return;
+        }
+
+        _disposedSemaphore.Wait();
+        try
+        {
             if (_disposed)
             {
                 return;
             }
             _disposed = true;
-
-            foreach(var item in _queue)
-            {
-                item.Value.Cancel();
-            }
+        }
+        finally
+        {
+            _disposedSemaphore.Release();
         }
 
-        protected override ValueTask DisposeAsyncCore()
+        foreach (var item in _queue)
         {
-            Dispose(true);
-
-            return default;
-        }
-
-        private void ThrowIfDisposed()
-        {
-            if (_disposed)
-            {
-                throw new ObjectDisposedException(nameof(RedisRateLimiter));
-            }
+            item.Value.Cancel();
         }
     }
 
-    internal readonly struct RequestRegistration
+    protected override ValueTask DisposeAsyncCore()
     {
-        public int Count { get; }
+        Dispose(true);
 
-        public TaskCompletionSource<RateLimitLease> Tcs { get; }
+        return default;
+    }
 
-        public CancellationTokenRegistration CancellationTokenRegistration { get; }
-
-        public RequestRegistration(int requestedCount, TaskCompletionSource<RateLimitLease> tcs, CancellationTokenRegistration cancellationTokenRegistration)
+    private void ThrowIfDisposed()
+    {
+        _disposedSemaphore.Wait();
+        try
         {
-            Count = requestedCount;
-            Tcs = tcs;
-            CancellationTokenRegistration = cancellationTokenRegistration;
+            ObjectDisposedException.ThrowIf(_disposed, typeof(RedisRateLimiter));
+        }
+        finally
+        {
+            _disposedSemaphore.Release();
         }
     }
+}
+
+internal readonly struct RequestRegistration(int requestedCount, TaskCompletionSource<RateLimitLease> tcs, CancellationTokenRegistration cancellationTokenRegistration)
+{
+    public int Count { get; } = requestedCount;
+
+    public TaskCompletionSource<RateLimitLease> Tcs { get; } = tcs;
+
+    public CancellationTokenRegistration CancellationTokenRegistration { get; } = cancellationTokenRegistration;
 }

@@ -1,22 +1,19 @@
-﻿using DotnetRateLimiter.RateLimiting;
-using DotnetRateLimiter.Redis.Extensions;
+﻿using DotnetRateLimiter.Redis.Extensions;
+using DotnetRateLimiter.Redis.RateLimiting;
+using DotnetRateLimiter.Redis.RateLimiting.Models;
 using StackExchange.Redis;
 using System;
-using System.Threading.Tasks;
 using System.Diagnostics;
 using System.Threading;
+using System.Threading.Tasks;
 
-namespace DotnetRateLimiter.Redis.Internal.RateLimiting
+namespace DotnetRateLimiter.Redis.Redis.Internal.RateLimiting;
+
+internal class SlidingWindowRateLimiter(IConnectionMultiplexer redis, WindowRequestSettings settings) : RateLimiter<WindowRequestSettings>(redis, settings), IRateLimiter
 {
-    internal class SlidingWindowRateLimiter : RateLimiter<WindowRequestSettings>, IRateLimiter
+    internal override void InitialSetup()
     {
-        public SlidingWindowRateLimiter(IConnectionMultiplexer redis, WindowRequestSettings settings) : base(redis, settings)
-        {
-        }
-
-        internal override void InitialSetup()
-        {
-            var script = @"
+        var script = @"
                 local doesExist = redis.call('EXISTS', KEYS[1])
 
                 if doesExist == 0 then
@@ -31,32 +28,32 @@ namespace DotnetRateLimiter.Redis.Internal.RateLimiting
                 
                 return 0";
 
-            _redis.GetDatabase(_settings.DatabaseId).ScriptEvaluate(script, new RedisKey[] { _settings.Key });
-        }
+        _redis.GetDatabase(_settings.DatabaseId).ScriptEvaluate(script, [_settings.Key]);
+    }
 
-        public long Count()
-        {
-            return _redis.GetDatabase(_settings.DatabaseId).SortedSetLength(_settings.Key);
-        }
+    public long Count()
+    {
+        return _redis.GetDatabase(_settings.DatabaseId).SortedSetLength(_settings.Key);
+    }
 
-        public Task<long> CountAsync(CancellationToken cancellationToken = default)
-        {
-            return _redis.GetDatabase(_settings.DatabaseId).SortedSetLengthAsync(_settings.Key).ContinueWith(async task => await task.ConfigureAwait(false)).Unwrap();
-        }
+    public Task<long> CountAsync(CancellationToken cancellationToken = default)
+    {
+        return _redis.GetDatabase(_settings.DatabaseId).SortedSetLengthAsync(_settings.Key).ContinueWith(async task => await task.ConfigureAwait(false)).Unwrap();
+    }
 
-        public long AvailableCount()
-        {
-            return _settings.Rate - _redis.GetDatabase(_settings.DatabaseId).SortedSetLength(_settings.Key);
-        }
+    public long AvailableCount()
+    {
+        return _settings.Rate - _redis.GetDatabase(_settings.DatabaseId).SortedSetLength(_settings.Key);
+    }
 
-        public Task<long> AvailableCountAsync(CancellationToken cancellationToken = default)
-        {
-            return _redis.GetDatabase(_settings.DatabaseId).SortedSetLengthAsync(_settings.Key).ContinueWith(async task => _settings.Rate - await task.ConfigureAwait(false)).Unwrap();
-        }
+    public Task<long> AvailableCountAsync(CancellationToken cancellationToken = default)
+    {
+        return _redis.GetDatabase(_settings.DatabaseId).SortedSetLengthAsync(_settings.Key).ContinueWith(async task => _settings.Rate - await task.ConfigureAwait(false)).Unwrap();
+    }
 
-        internal override string GetLuaScript()
-        {
-            var zaddStatement = $@"
+    internal override string GetLuaScript()
+    {
+        var zaddStatement = $@"
                 local existingAtScore = redis.call('ZCOUNT', @Key, score, score)
                 local count = tonumber(@IncrementAmount)
                 local items = {{}}
@@ -71,91 +68,91 @@ namespace DotnetRateLimiter.Redis.Internal.RateLimiting
 
                 addedCount = redis.call('ZADD', @Key, unpack(items))";
 
-            var gatedZaddStatement = $@"local difference = tonumber(@Rate) - active - tonumber(@IncrementAmount)
+        var gatedZaddStatement = $@"
                 if difference >= 0 then
                     {zaddStatement}
                 end";
 
-            var fullZAddStatement = _settings.DoRecordOnlyOnSuccess ? gatedZaddStatement : zaddStatement;
+        var fullZAddStatement = _settings.DoRecordOnlyOnSuccess ? gatedZaddStatement : zaddStatement;
 
-            var expirationStatement = _settings.GetExpirationUtc != null
-                ? $"redis.call('EXPIREAT', @Key, tonumber(@Expiration))"
-                : $"redis.call('EXPIRE', @Key, tonumber(@IntervalSeconds))";
+        var expirationStatement = _settings.GetExpirationUtc != null
+            ? $"redis.call('EXPIREAT', @Key, tonumber(@Expiration))"
+            : $"redis.call('EXPIRE', @Key, tonumber(@IntervalSeconds))";
 
-            return $@"
+        return $@"
                 local results = {{}}
                 local addedCount = 0
                 local score = @Now
                 local removed = redis.call('ZREMRANGEBYSCORE', @Key, 0, (score - @IntervalTicks))
                 local active = redis.call('ZCARD', @Key)
+                local difference = tonumber(@Rate) - active - tonumber(@IncrementAmount)
                 {fullZAddStatement}
                 {expirationStatement}
-                results[#results+1] = addedCount
+                results[#results+1] = difference
                 results[#results+1] = active
                 return results";
-        }
+    }
 
-        internal override object GetParameters(int count)
+    internal override object GetParameters(int count)
+    {
+        var tickDivisor = 10000;
+        var now = _settings.GetNowUtc?.Invoke() ?? DateTime.UtcNow;
+        var nowTicks = now.Ticks / tickDivisor;
+        var interval = _settings.GetInterval();
+        var intervalTicks = interval.Ticks / tickDivisor;
+
+        if(_settings.GetExpirationUtc is not null)
         {
-            var tickDivisor = 10000;
-            var now = _settings.GetNowUtc?.Invoke() ?? DateTime.UtcNow;
-            var nowTicks = now.Ticks / tickDivisor;
-            var interval = _settings.GetInterval();
-            var intervalTicks = interval.Ticks / tickDivisor;
-
-            if(_settings.GetExpirationUtc is not null)
-            {
-                var expiration = _settings.GetExpirationUtc();
-
-                return new
-                {
-                    Key = _settings.Key,
-                    IncrementAmount = new RedisValue(count.ToString()),
-                    Now = new RedisValue(nowTicks.ToString()),
-                    IntervalSeconds = new RedisValue(interval.TotalSeconds.ToString()),
-                    IntervalTicks = new RedisValue(intervalTicks.ToString()),
-                    Expiration = new RedisValue(((long)expiration.ToRedisSeconds()).ToString()),
-                    Rate = new RedisValue(_settings.Rate.ToString())
-                };
-            }
+            var expiration = _settings.GetExpirationUtc();
 
             return new
             {
-                Key = _settings.Key,
+                _settings.Key,
                 IncrementAmount = new RedisValue(count.ToString()),
                 Now = new RedisValue(nowTicks.ToString()),
                 IntervalSeconds = new RedisValue(interval.TotalSeconds.ToString()),
                 IntervalTicks = new RedisValue(intervalTicks.ToString()),
+                Expiration = new RedisValue(((long)expiration.ToRedisSeconds()).ToString()),
                 Rate = new RedisValue(_settings.Rate.ToString())
             };
         }
 
-        internal override RateLimitResponse GetRateLimitResponse(int count, RedisResult redisResult)
+        return new
         {
-            var values = (RedisResult[]?)redisResult;
+            _settings.Key,
+            IncrementAmount = new RedisValue(count.ToString()),
+            Now = new RedisValue(nowTicks.ToString()),
+            IntervalSeconds = new RedisValue(interval.TotalSeconds.ToString()),
+            IntervalTicks = new RedisValue(intervalTicks.ToString()),
+            Rate = new RedisValue(_settings.Rate.ToString())
+        };
+    }
 
-            Debug.Assert(values is not null);
-            Debug.Assert(values.Length > 1);
+    internal override RateLimitResponse GetRateLimitResponse(int count, RedisResult redisResult)
+    {
+        var values = (RedisResult[]?)redisResult;
 
-            var addedCount = (long)values[0];
-            var activeCount = (long)values[1];
-            var isAdded = addedCount > 0;
+        Debug.Assert(values is not null);
+        Debug.Assert(values.Length > 1);
 
-            if(isAdded)
-            {
-                activeCount += count;
-            }
+        var availableCount = (long)values[0];
+        var activeCount = (long)values[1];
+        var isAdded = availableCount >= 0;
 
-            return new RateLimitResponse { ActiveCount = activeCount, IsSuccessful = isAdded };
+        if(isAdded)
+        {
+            activeCount += count;
         }
 
-        internal override void CheckArguments()
+        return new RateLimitResponse { ActiveCount = activeCount, IsSuccessful = isAdded };
+    }
+
+    internal override void CheckArguments()
+    {
+        base.CheckArguments();
+        if(_settings.Rate <= 0)
         {
-            base.CheckArguments();
-            if(_settings.Rate <= 0)
-            {
-                throw new ArgumentException($"Argument {nameof(_settings.Rate)} must be greater than 0.");
-            }
+            throw new ArgumentException($"Argument {nameof(_settings.Rate)} must be greater than 0.");
         }
     }
 }

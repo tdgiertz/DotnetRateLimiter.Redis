@@ -1,22 +1,19 @@
-﻿using DotnetRateLimiter.RateLimiting;
+﻿using DotnetRateLimiter.Redis.RateLimiting;
+using DotnetRateLimiter.Redis.RateLimiting.Models;
 using StackExchange.Redis;
 using System;
 using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace DotnetRateLimiter.Redis.Internal.RateLimiting
-{
-    internal class TokenBucketRateLimiter : RateLimiter<TokenBucketRequestSettings>, IRateLimiter
-    {
-        public TokenBucketRateLimiter(IConnectionMultiplexer redis, TokenBucketRequestSettings settings) : base(redis, settings)
-        {
-        }
+namespace DotnetRateLimiter.Redis.Redis.Internal.RateLimiting;
 
-        internal override void InitialSetup()
-        {
-            var jsonStart = "{";
-            var script = @$"
+internal class TokenBucketRateLimiter(IConnectionMultiplexer redis, TokenBucketRequestSettings settings) : RateLimiter<TokenBucketRequestSettings>(redis, settings), IRateLimiter
+{
+    internal override void InitialSetup()
+    {
+        var jsonStart = "{";
+        var script = @$"
                 local doesExist = redis.call('EXISTS', KEYS[1])
 
                 if doesExist == 0 then
@@ -41,63 +38,63 @@ namespace DotnetRateLimiter.Redis.Internal.RateLimiting
                 
                 return 0";
 
-            _redis.GetDatabase(_settings.DatabaseId).ScriptEvaluate(script, new RedisKey[] { _settings.Key });
-        }
+        _redis.GetDatabase(_settings.DatabaseId).ScriptEvaluate(script, [_settings.Key]);
+    }
 
-        public long Count()
+    public long Count()
+    {
+        var redisValue = _redis.GetDatabase(_settings.DatabaseId).StringGet(_settings.Key);
+
+        if(redisValue == RedisValue.Null)
         {
-            var redisValue = _redis.GetDatabase(_settings.DatabaseId).StringGet(_settings.Key);
-
-            if(redisValue == RedisValue.Null)
-            {
-                return 0;
-            }
-
-            return _settings.Capacity - RedisValueToLong(redisValue);
-        }
-
-        public Task<long> CountAsync(CancellationToken cancellationToken = default)
-        {
-            return _redis.GetDatabase(_settings.DatabaseId).StringGetAsync(_settings.Key)
-                .ContinueWith(async task =>
-                {
-                    var redisValue = await task.ConfigureAwait(false);
-
-                    if(redisValue == RedisValue.Null)
-                    {
-                        return 0;
-                    }
-
-                    return _settings.Capacity - RedisValueToLong(redisValue);
-                }).Unwrap();
-        }
-
-        public long AvailableCount()
-        {
-            var redisValue = _redis.GetDatabase(_settings.DatabaseId).StringGet(_settings.Key);
-
-            return RedisValueToLong(redisValue);
-        }
-
-        public Task<long> AvailableCountAsync(CancellationToken cancellationToken = default)
-        {
-            return _redis.GetDatabase(_settings.DatabaseId).StringGetAsync(_settings.Key)
-                .ContinueWith(async task => RedisValueToLong(await task.ConfigureAwait(false))).Unwrap();
-        }
-
-        private static long RedisValueToLong(RedisValue redisValue)
-        {
-            if(redisValue != RedisValue.Null)
-            {
-                return System.Text.Json.JsonDocument.Parse(redisValue.ToString()).RootElement.GetProperty("TokenCount").GetInt64();
-            }
-
             return 0;
         }
 
-        internal override string GetLuaScript()
+        return _settings.Capacity - RedisValueToLong(redisValue);
+    }
+
+    public Task<long> CountAsync(CancellationToken cancellationToken = default)
+    {
+        return _redis.GetDatabase(_settings.DatabaseId).StringGetAsync(_settings.Key)
+            .ContinueWith(async task =>
+            {
+                var redisValue = await task.ConfigureAwait(false);
+
+                if(redisValue == RedisValue.Null)
+                {
+                    return 0;
+                }
+
+                return _settings.Capacity - RedisValueToLong(redisValue);
+            }).Unwrap();
+    }
+
+    public long AvailableCount()
+    {
+        var redisValue = _redis.GetDatabase(_settings.DatabaseId).StringGet(_settings.Key);
+
+        return RedisValueToLong(redisValue);
+    }
+
+    public Task<long> AvailableCountAsync(CancellationToken cancellationToken = default)
+    {
+        return _redis.GetDatabase(_settings.DatabaseId).StringGetAsync(_settings.Key)
+            .ContinueWith(async task => RedisValueToLong(await task.ConfigureAwait(false))).Unwrap();
+    }
+
+    private static long RedisValueToLong(RedisValue redisValue)
+    {
+        if(redisValue != RedisValue.Null)
         {
-            return $@"
+            return System.Text.Json.JsonDocument.Parse(redisValue.ToString()).RootElement.GetProperty("TokenCount").GetInt64();
+        }
+
+        return 0;
+    }
+
+    internal override string GetLuaScript()
+    {
+        return $@"
                 local results = {{}}
 
                 local capacity = tonumber(@Rate)
@@ -148,48 +145,47 @@ namespace DotnetRateLimiter.Redis.Internal.RateLimiting
                 results[#results+1] = tokensAvailable
                 results[#results+1] = isSuccessful
                 return results";
-        }
+    }
 
-        internal override object GetParameters(int count)
+    internal override object GetParameters(int count)
+    {
+        var tickDivisor = 10000;
+        var now = _settings.GetNowUtc?.Invoke() ?? DateTime.UtcNow;
+        var nowTicks = now.Ticks / tickDivisor;
+        var interval = _settings.GetInterval();
+        var intervalTicks = interval.Ticks / tickDivisor;
+
+        return new
         {
-            var tickDivisor = 10000;
-            var now = _settings.GetNowUtc?.Invoke() ?? DateTime.UtcNow;
-            var nowTicks = now.Ticks / tickDivisor;
-            var interval = _settings.GetInterval();
-            var intervalTicks = interval.Ticks / tickDivisor;
+            _settings.Key,
+            IncrementAmount = new RedisValue(count.ToString()),
+            Now = new RedisValue(nowTicks.ToString()),
+            IntervalSeconds = new RedisValue(interval.TotalSeconds.ToString()),
+            IntervalTicks = new RedisValue(intervalTicks.ToString()),
+            Rate = new RedisValue(_settings.Capacity.ToString()),
+            RefillRate = new RedisValue(_settings.RefillRate.ToString()),
+        };
+    }
 
-            return new
-            {
-                Key = _settings.Key,
-                IncrementAmount = new RedisValue(count.ToString()),
-                Now = new RedisValue(nowTicks.ToString()),
-                IntervalSeconds = new RedisValue(interval.TotalSeconds.ToString()),
-                IntervalTicks = new RedisValue(intervalTicks.ToString()),
-                Rate = new RedisValue(_settings.Capacity.ToString()),
-                RefillRate = new RedisValue(_settings.RefillRate.ToString()),
-            };
-        }
+    internal override RateLimitResponse GetRateLimitResponse(int count, RedisResult redisResult)
+    {
+        var values = (RedisResult[]?)redisResult;
 
-        internal override RateLimitResponse GetRateLimitResponse(int count, RedisResult redisResult)
+        Debug.Assert(values is not null);
+        Debug.Assert(values.Length > 1);
+
+        var activeCount = (long)values[0];
+        var isSuccessful = (bool)values[1];
+
+        return new RateLimitResponse { ActiveCount = activeCount, IsSuccessful = isSuccessful };
+    }
+
+    internal override void CheckArguments()
+    {
+        base.CheckArguments();
+        if(_settings.Capacity <= 0)
         {
-            var values = (RedisResult[]?)redisResult;
-
-            Debug.Assert(values is not null);
-            Debug.Assert(values.Length > 1);
-
-            var activeCount = (long)values[0];
-            var isSuccessful = (bool)values[1];
-
-            return new RateLimitResponse { ActiveCount = activeCount, IsSuccessful = isSuccessful };
-        }
-
-        internal override void CheckArguments()
-        {
-            base.CheckArguments();
-            if(_settings.Capacity <= 0)
-            {
-                throw new ArgumentException($"Argument {nameof(_settings.Capacity)} must be greater than 0.");
-            }
+            throw new ArgumentException($"Argument {nameof(_settings.Capacity)} must be greater than 0.");
         }
     }
 }

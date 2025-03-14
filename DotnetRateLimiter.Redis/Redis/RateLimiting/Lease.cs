@@ -1,22 +1,16 @@
 using System.Collections.Generic;
 using System.Threading.RateLimiting;
 
-namespace DotnetRateLimiter.Redis.RateLimiting
+namespace DotnetRateLimiter.Redis.Redis.RateLimiting;
+
+public class Lease(bool isAcquired) : RateLimitLease
 {
-    public class Lease : RateLimitLease
+    public override bool IsAcquired { get; } = isAcquired;
+
+    public override IEnumerable<string> MetadataNames => throw new System.NotImplementedException();
+
+    public override bool TryGetMetadata(string metadataName, out object? metadata)
     {
-        public override bool IsAcquired { get; }
-
-        public override IEnumerable<string> MetadataNames => throw new System.NotImplementedException();
-
-        public Lease(bool isAcquired)
-        {
-            IsAcquired = isAcquired;
-        }
-
-        public override bool TryGetMetadata(string metadataName, out object? metadata)
-        {
-            throw new System.NotImplementedException();
-        }
+        throw new System.NotImplementedException();
     }
 }

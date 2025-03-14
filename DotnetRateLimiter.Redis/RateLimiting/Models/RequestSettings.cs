@@ -1,11 +1,10 @@
 ﻿using System.Diagnostics.CodeAnalysis;
 
-namespace DotnetRateLimiter.RateLimiting
+namespace DotnetRateLimiter.Redis.RateLimiting.Models;
+
+public class RequestSettings
 {
-    public class RequestSettings
-    {
-        public int DatabaseId { get; set; } = -1;
-        [NotNull]
-        public string? Key { get; set; }
-    }
+    public int DatabaseId { get; set; } = -1;
+    [NotNull]
+    public string? Key { get; set; }
 }

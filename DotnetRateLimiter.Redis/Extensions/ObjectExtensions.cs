@@ -1,34 +1,33 @@
 ﻿using System;
 
-namespace DotnetRateLimiter.Redis.Extensions
+namespace DotnetRateLimiter.Redis.Extensions;
+
+internal static class ObjectExtensions
 {
-    internal static class ObjectExtensions
+    public static T? ConvertTo<T>(this object value)
     {
-        public static T? ConvertTo<T>(this object value)
+        if (value is T valueAsT)
         {
-            if (value is T valueAsT)
-            {
-                return valueAsT;
-            }
-            else
-            {
-                var type = typeof(T);
-                var nullableType = Nullable.GetUnderlyingType(type);
-
-                if(value == null)
-                {
-                    return default;
-                }
-
-                return (T)Convert.ChangeType(value, nullableType ?? type);
-            }
+            return valueAsT;
         }
-
-        public static object? ConvertTo(this object value, Type type)
+        else
         {
-            var methodInfo = typeof(ObjectExtensions).GetMethod(nameof(ObjectExtensions.ConvertTo), new[] { typeof(object) });
-            methodInfo = methodInfo?.MakeGenericMethod(new[] { type });
-            return methodInfo?.Invoke(null, new[] { value });
+            var type = typeof(T);
+            var nullableType = Nullable.GetUnderlyingType(type);
+
+            if(value == null)
+            {
+                return default;
+            }
+
+            return (T)Convert.ChangeType(value, nullableType ?? type);
         }
+    }
+
+    public static object? ConvertTo(this object value, Type type)
+    {
+        var methodInfo = typeof(ObjectExtensions).GetMethod(nameof(ObjectExtensions.ConvertTo), [typeof(object)]);
+        methodInfo = methodInfo?.MakeGenericMethod([type]);
+        return methodInfo?.Invoke(null, [value]);
     }
 }
